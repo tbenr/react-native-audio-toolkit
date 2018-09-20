@@ -362,10 +362,6 @@ public class AudioRecorderModule extends ReactContextBaseJavaModule implements
                 stopMeteringTimer();
             }
             recorder.pause();
-            if (this.recorderAutoDestroy.get(recorderId)) {
-                Log.d(LOG_TAG, "Autodestroying recorder...");
-                destroy(recorderId);
-            }
             callback.invoke();
         } catch (Exception e) {
             callback.invoke(errObj("stopfail", e.toString()));
