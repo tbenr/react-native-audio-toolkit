@@ -33,6 +33,7 @@ public class AudioRecorderModule extends ReactContextBaseJavaModule implements
 
     Map<Integer, MediaRecorder> recorderPool = new HashMap<>();
     Map<Integer, Boolean> recorderAutoDestroy = new HashMap<>();
+    Map<Integer, Boolean> recorderPaused = new HashMap<>();
 
     private ReactApplicationContext context;
     private Timer meteringUpdateTimer;
@@ -189,6 +190,7 @@ public class AudioRecorderModule extends ReactContextBaseJavaModule implements
                 meteringRecorderId = null;
                 meteringRecorder = null;
             }
+            this.recorderPaused.remove(recorderId);
 
             WritableMap data = new WritableNativeMap();
             data.putString("message", "Destroyed recorder");
@@ -272,6 +274,7 @@ public class AudioRecorderModule extends ReactContextBaseJavaModule implements
         }
 
         this.recorderAutoDestroy.put(recorderId, autoDestroy);
+        this.recorderPaused.put(recorderId, false);
 
         try {
             recorder.prepare();
@@ -308,7 +311,12 @@ public class AudioRecorderModule extends ReactContextBaseJavaModule implements
             if(recorderId == meteringRecorderId) {
                 startMeteringTimer(meteringInterval);
             }
-            recorder.start();
+            if (this.recorderPaused.get(recorderId)) {
+                recorder.resume();
+                this.recorderPaused.put(recorderId, false);
+            } else {
+                recorder.start();
+            }
 
             callback.invoke();
         } catch (Exception e) {
@@ -362,6 +370,7 @@ public class AudioRecorderModule extends ReactContextBaseJavaModule implements
                 stopMeteringTimer();
             }
             recorder.pause();
+            this.recorderPaused.put(recorderId, true);
             callback.invoke();
         } catch (Exception e) {
             callback.invoke(errObj("stopfail", e.toString()));
