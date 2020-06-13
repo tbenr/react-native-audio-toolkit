@@ -2,8 +2,6 @@ package com.reactnativecommunity.rctaudiotoolkit;
 
 import android.annotation.TargetApi;
 import android.media.MediaRecorder;
-import android.os.Build;
-import android.os.Environment;
 import android.util.Log;
 import android.net.Uri;
 import android.webkit.URLUtil;
@@ -11,7 +9,6 @@ import android.content.ContextWrapper;
 
 import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.ReactApplicationContext;
-import com.facebook.react.bridge.ReactContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
 import com.facebook.react.bridge.Callback;
@@ -23,11 +20,12 @@ import com.facebook.react.modules.core.DeviceEventManagerModule;
 import java.io.IOException;
 import java.io.File;
 import java.lang.Thread;
-import java.net.URISyntaxException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
+import java.util.Timer;
+import java.util.TimerTask;
 
 public class AudioRecorderModule extends ReactContextBaseJavaModule implements
         MediaRecorder.OnInfoListener, MediaRecorder.OnErrorListener {
@@ -37,6 +35,10 @@ public class AudioRecorderModule extends ReactContextBaseJavaModule implements
     Map<Integer, Boolean> recorderAutoDestroy = new HashMap<>();
 
     private ReactApplicationContext context;
+    private Timer meteringUpdateTimer;
+    private int meteringFrameId = 0;
+    Integer meteringRecorderId = null;
+    MediaRecorder meteringRecorder = null;
 
     public AudioRecorderModule(ReactApplicationContext reactContext) {
         super(reactContext);
@@ -140,6 +142,41 @@ public class AudioRecorderModule extends ReactContextBaseJavaModule implements
 
         return uri;
     }
+    
+    // metering methods
+    private void startMeteringTimer(int monitorInterval) {
+        meteringUpdateTimer = new Timer();
+        meteringUpdateTimer.scheduleAtFixedRate(new TimerTask() {
+            @Override
+            public void run() {
+                if(meteringRecorderId != null && meteringRecorder != null) {
+                    WritableMap body = Arguments.createMap();
+                    body.putDouble("id", meteringFrameId++);
+
+                    int amplitude = meteringRecorder.getMaxAmplitude();
+                    if (amplitude == 0) {
+                        body.putInt("value", -160);
+                        body.putInt("rawValue", 0);
+                    } else {
+                        body.putInt("rawValue", amplitude);
+                        body.putInt("value", (int) (20 * Math.log(((double) amplitude) / 32767d)));
+                    }
+                    emitEvent(meteringRecorderId, "meter", body);
+                }
+            }
+        }, 0, monitorInterval);
+    }
+
+    private void stopMeteringTimer() {
+        if (meteringUpdateTimer != null) {
+            meteringUpdateTimer.cancel();
+            meteringUpdateTimer.purge();
+            meteringUpdateTimer = null;
+            meteringRecorderId = null;
+            meteringRecorder = null;
+            meteringFrameId = 0;
+        }
+    }
 
     @ReactMethod
     public void destroy(Integer recorderId, Callback callback) {
@@ -240,6 +277,16 @@ public class AudioRecorderModule extends ReactContextBaseJavaModule implements
         } catch (IOException e) {
             callback.invoke(errObj("preparefail", e.toString()));
         }
+
+        if (options.hasKey("meteringInterval")) {
+            int meteringInterval = options.getInt("meteringInterval");
+            if (meteringRecorderId != null) {
+                Log.i(LOG_TAG, "multiple recorder metering are not currently supporter. Metering will be active on the last recorder.");
+            }
+            meteringRecorder = recorder;
+            meteringRecorderId = recorderId;
+            startMeteringTimer(meteringInterval);
+        }
     }
 
     @ReactMethod
@@ -268,6 +315,9 @@ public class AudioRecorderModule extends ReactContextBaseJavaModule implements
         }
 
         try {
+            if(recorderId == meteringRecorderId) {
+                stopMeteringTimer();
+            }
             recorder.stop();
             if (this.recorderAutoDestroy.get(recorderId)) {
                 Log.d(LOG_TAG, "Autodestroying recorder...");
